@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  homeassistant:
+    image: "ghcr.io/home-assistant/home-assistant:stable"
+    container_name: homeassistant
+    volumes:
+      - ./data/homeassistant:/config
+      - /etc/localtime:/etc/localtime:ro
+      - /run/dbus:/run/dbus:ro
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-n8n_nextcloud}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    networks:
+      - ai_net
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: n8n
+    restart: unless-stopped
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-n8n_nextcloud}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-admin}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=Europe/Berlin
+    ports:
+      - "5678:5678"
+    volumes:
+      - ./data/n8n:/home/node/.n8n
+    networks:
+      - ai_net
+    depends_on:
+      - postgres
+
+  nextcloud:
+    image: nextcloud
+    container_name: nextcloud
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB:-n8n_nextcloud}
+      - POSTGRES_USER=${POSTGRES_USER:-admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+    volumes:
+      - ./data/nextcloud:/var/www/html
+    networks:
+      - ai_net
+    depends_on:
+      - postgres
+
+  agent-harness:
+    image: python:3.11-slim
+    container_name: agent_harness
+    restart: unless-stopped
+    command: tail -f /dev/null
+    volumes:
+      - ./data/harness:/workspace
+      - ./data/nextcloud:/nextcloud_shared
+    environment:
+      - NEXTCLOUD_URL=http://nextcloud:80
+      - OLLAMA_API_URL=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ai_net
+
+networks:
+  ai_net:
+    driver: bridge

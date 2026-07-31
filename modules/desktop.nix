@@ -1,10 +1,16 @@
 { config, pkgs, ... }:
 
 {
-  # X11 & Wayland / SDDM & Plasma 6
+  # --- X11 & Desktop Environment ---
   services.xserver.enable = true;
   services.displayManager.sddm.enable = true;
   services.desktopManager.plasma6.enable = true;
+
+  # Server soll niemals schlafen gehen!
+  systemd.targets.sleep.enable = false;
+  systemd.targets.suspend.enable = false;
+  systemd.targets.hibernate.enable = false;
+  systemd.targets.hybrid-sleep.enable = false;
 
   services.xserver.xkb = {
     layout = "de";

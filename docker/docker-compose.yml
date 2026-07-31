@@ -36,11 +36,11 @@ services:
       - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-n8n_nextcloud}
       - DB_POSTGRESDB_USER=${POSTGRES_USER:-admin}
       - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-password}
-      - N8N_HOST=localhost
+      - N8N_HOST=${DOMAIN_NAME:-localhost}
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
-      - WEBHOOK_URL=http://localhost:5678/
-      - GENERIC_TIMEZONE=Europe/Berlin
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678/}
+      - GENERIC_TIMEZONE=${TIMEZONE:-Europe/Berlin}
     ports:
       - "5678:5678"
     volumes:
@@ -77,8 +77,8 @@ services:
       - ./data/harness:/workspace
       - ./data/nextcloud:/nextcloud_shared
     environment:
-      - NEXTCLOUD_URL=http://nextcloud:80
-      - OLLAMA_API_URL=http://host.docker.internal:11434
+      - NEXTCLOUD_URL=${NEXTCLOUD_URL:-http://nextcloud:80}
+      - OLLAMA_API_URL=${OLLAMA_API_URL:-http://host.docker.internal:11434}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -91,7 +91,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - WHISPER_MODEL=small
+      - WHISPER_MODEL=${WHISPER_MODEL:-small}
     deploy:
       resources:
         reservations:

@@ -46,6 +46,8 @@ services:
       - "5678:5678"
     volumes:
       - ./data/n8n:/home/node/.n8n
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - ai_net
     depends_on:

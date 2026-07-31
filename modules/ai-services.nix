@@ -31,6 +31,8 @@
   services.ollama = {
     enable = true;
     package = pkgs.ollama-cuda; # Nach GPU-Tausch auf pkgs.ollama-rocm ändern
+    host = "0.0.0.0"; # Erlaube Zugriff von Docker-Containern
+    openFirewall = true;
   };
 
 

@@ -10,6 +10,8 @@
     enable32Bit = true;
   };
 
+  # --- Hardware / Treiber ---
+  hardware.bluetooth.enable = true; # Wichtig für Home Assistant Scanner
   hardware.nvidia = {
     modesetting.enable = true;
     powerManagement.enable = false;

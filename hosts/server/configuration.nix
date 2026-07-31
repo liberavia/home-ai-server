@@ -28,6 +28,15 @@
     extraGroups = [ "networkmanager" "wheel" "docker" ];
   };
 
+  # SSH-Server aktivieren für Remote-Verwaltung
+  services.openssh = {
+    enable = true;
+    settings = {
+      PermitRootLogin = "no";
+      PasswordAuthentication = true; # Kann später auf "no" gesetzt werden, wenn SSH-Keys genutzt werden
+    };
+  };
+
   nixpkgs.config.allowUnfree = true;
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 

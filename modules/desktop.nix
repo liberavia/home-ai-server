@@ -53,7 +53,7 @@
     # Grafik & Kreativ
     gimp
     inkscape
-    calligra
+    kdePackages.calligra
     libreoffice-fresh
     
     # Gamedev

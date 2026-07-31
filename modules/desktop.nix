@@ -13,7 +13,7 @@
   console.keyMap = "de";
 
   # Sound mit Pipewire
-  hardware.pulseaudio.enable = false;
+  services.pulseaudio.enable = false;
   security.rtkit.enable = true;
   services.pipewire = {
     enable = true;
@@ -48,7 +48,7 @@
   environment.systemPackages = with pkgs; [
     git
     nodejs_22 # Für npm und ggf. agy CLI
-    yakuake
+    kdePackages.yakuake
 
     # Grafik & Kreativ
     gimp

@@ -28,7 +28,7 @@
   # --- KI / Ollama ---
   services.ollama = {
     enable = true;
-    acceleration = "cuda"; # Nach GPU-Tausch auf "rocm" ändern
+    package = pkgs.ollama-cuda; # Nach GPU-Tausch auf pkgs.ollama-rocm ändern
   };
 
 

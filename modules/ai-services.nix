@@ -35,8 +35,8 @@
   # --- Docker & Container ---
   virtualisation.docker = {
     enable = true;
-    hardware.nvidia-container-toolkit.enable = true; # Für GPU-Zugriff in Containern
   };
+  hardware.nvidia-container-toolkit.enable = true; # Für GPU-Zugriff in Containern
 
 
   # --- Firewall für Home-AI-Dienste ---

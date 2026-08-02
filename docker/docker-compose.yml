@@ -41,8 +41,9 @@ services:
       - N8N_PROTOCOL=http
       - GENERIC_TIMEZONE=${TIMEZONE:-Europe/Berlin}
       - N8N_SECURE_COOKIE=false
+    entrypoint: ["tini", "--", "/bin/sh", "-c"]
     command: >
-      sh -c "
+      "
         echo 'Warte auf Cloudflare Tunnel URL...'
         touch /tmp/tunnel/cloudflared.log
         while ! grep -q 'https://.*trycloudflare.com' /tmp/tunnel/cloudflared.log; do
@@ -50,7 +51,7 @@ services:
         done
         export WEBHOOK_URL=\$$(grep -o 'https://[a-zA-Z0-9.-]*\.trycloudflare\.com' /tmp/tunnel/cloudflared.log | head -n 1)
         echo \"Tunnel gefunden: \$$WEBHOOK_URL\"
-        exec n8n start
+        exec /docker-entrypoint.sh start
       "
     ports:
       - "5678:5678"

@@ -44,6 +44,7 @@
 
 
   # --- Firewall für Home-AI-Dienste ---
+  networking.firewall.trustedInterfaces = [ "docker0" "br-ainet" ];
   networking.firewall.allowedTCPPorts = [ 
     8123 # Home Assistant
     5678 # n8n

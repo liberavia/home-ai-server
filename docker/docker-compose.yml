@@ -111,3 +111,5 @@ services:
 networks:
   ai_net:
     driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-ainet

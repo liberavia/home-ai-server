@@ -41,17 +41,46 @@ services:
       - N8N_PROTOCOL=http
       - GENERIC_TIMEZONE=${TIMEZONE:-Europe/Berlin}
       - N8N_SECURE_COOKIE=false
-    command: start --tunnel
+    command: >
+      sh -c "
+        echo 'Warte auf Cloudflare Tunnel URL...'
+        touch /tmp/tunnel/cloudflared.log
+        while ! grep -q 'https://.*trycloudflare.com' /tmp/tunnel/cloudflared.log; do
+          sleep 2
+        done
+        export WEBHOOK_URL=\$$(grep -o 'https://[a-zA-Z0-9.-]*\.trycloudflare\.com' /tmp/tunnel/cloudflared.log | head -n 1)
+        echo \"Tunnel gefunden: \$$WEBHOOK_URL\"
+        exec n8n start
+      "
     ports:
       - "5678:5678"
     volumes:
       - ./data/n8n:/home/node/.n8n
+      - tunnel_data:/tmp/tunnel
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - ai_net
     depends_on:
       - postgres
+      - cloudflared
+
+  cloudflared:
+    image: python:3.11-slim
+    container_name: cloudflared
+    restart: unless-stopped
+    volumes:
+      - tunnel_data:/tmp/tunnel
+    command: >
+      sh -c "
+        apt-get update && apt-get install -y curl &&
+        curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /cloudflared &&
+        chmod +x /cloudflared &&
+        echo 'Starte Cloudflare Tunnel...' &&
+        /cloudflared tunnel --url http://n8n:5678 2>&1 | tee /tmp/tunnel/cloudflared.log
+      "
+    networks:
+      - ai_net
 
   nextcloud:
     image: nextcloud
@@ -113,3 +142,6 @@ networks:
     driver: bridge
     driver_opts:
       com.docker.network.bridge.name: br-ainet
+
+volumes:
+  tunnel_data:

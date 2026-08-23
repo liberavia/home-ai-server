@@ -7,8 +7,7 @@ set -e
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 FLAKE_HOST="home-ai-server" # Hostname matching flake.nix
 
-# Ensure userspace bin is in PATH for SteamOS distrobox installations
-export PATH="$HOME/.local/bin:$PATH"
+
 
 function print_help() {
     echo "=========================================="
@@ -41,8 +40,23 @@ function check_sudo() {
     fi
 }
 
+function check_disk_space() {
+    local min_gb=$1
+    local partition=$2
+    local free_space_kb=$(df -k "$partition" | awk 'NR==2 {print $4}')
+    local free_space_gb=$((free_space_kb / 1024 / 1024))
+    
+    if [ "$free_space_gb" -lt "$min_gb" ]; then
+        echo "[-] ERROR: Low disk space! Only ${free_space_gb}GB available on $partition."
+        echo "    Require at least ${min_gb}GB to safely process updates."
+        exit 1
+    fi
+    echo "[+] Disk space check passed: ${free_space_gb}GB available on $partition."
+}
+
 function host_update_system() {
     echo "[+] Updating NixOS System (Pull-Only GitOps)..."
+    check_disk_space 5 /
     cd "$SCRIPT_DIR"
     
     echo "[+] Pulling latest changes from Git repository..."
@@ -124,53 +138,37 @@ function host_autoupdate() {
 # MANAGEMENT LEVEL
 # ==========================================
 
-function install_distrobox() {
-    echo "[+] Distrobox not found. Do you want to install it locally?"
-    echo "    (Installs to ~/.local/bin without requiring sudo)"
-    read -p "Install Distrobox? (y/N): " install_choice
-    if [[ "$install_choice" =~ ^[Yy]$ ]]; then
-        echo "[+] Downloading and installing Distrobox..."
-        curl -s https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix ~/.local
-        export PATH="$HOME/.local/bin:$PATH"
-        
-        # We need Podman or Docker to run Distrobox. SteamOS usually has podman preinstalled.
-        if ! command -v podman &> /dev/null && ! command -v docker &> /dev/null; then
-            echo "[-] Warning: Podman or Docker is not installed on your system."
-            echo "    Distrobox requires a container engine. On SteamOS, you might need to"
-            echo "    install Podman or enable it. Please verify your container engine setup."
-        fi
-    else
-        echo "[-] Setup aborted. Neither Nix nor Distrobox available."
-        exit 1
-    fi
-}
-
 function manage_bump() {
     echo "=========================================="
     echo " Management: Bump flake.lock"
     echo "=========================================="
+    check_disk_space 2 .
     cd "$SCRIPT_DIR"
     
-    # 1. Check for tools (Nix natively or distrobox)
+    # 1. Check for tools (Nix natively or container engine)
+    local nix_flags="--extra-experimental-features \"nix-command flakes\""
+    
     if command -v nix &> /dev/null; then
         echo "[+] Native 'nix' command found. Executing update..."
-        nix flake update
+        eval "nix flake update $nix_flags"
         
     else
-        if ! command -v distrobox &> /dev/null; then
-            install_distrobox
+        echo "[+] Native Nix not found. Using containerized Nix environment..."
+        
+        local container_cmd=""
+        if command -v podman &> /dev/null; then
+            container_cmd="podman run --rm -v \"$SCRIPT_DIR:/workspace\" -w /workspace docker.io/nixos/nix:latest"
+        elif command -v docker &> /dev/null; then
+            # Use docker with current user ID to avoid writing root-owned files to the host
+            container_cmd="docker run --rm --user $(id -u):$(id -g) -v \"$SCRIPT_DIR:/workspace\" -w /workspace docker.io/nixos/nix:latest"
+        else
+            echo "[-] Error: Neither native Nix, Podman, nor Docker are installed."
+            echo "    Please install Podman on your Steam Deck to use this feature."
+            exit 1
         fi
         
-        echo "[+] 'distrobox' found. Using containerized Nix environment..."
-        
-        # Check if container exists, create if not
-        if ! distrobox list | grep -q "nix-env"; then
-            echo "[+] Initializing 'nix-env' distrobox container..."
-            distrobox create --name nix-env --image docker.io/nixos/nix:latest -Y
-        fi
-        
-        echo "[+] Starting update inside the container..."
-        distrobox enter nix-env -- nix flake update
+        echo "[+] Starting update inside a temporary container..."
+        eval "$container_cmd nix flake update $nix_flags"
     fi
 
     # 2. Check for changes and commit

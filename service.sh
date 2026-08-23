@@ -20,7 +20,8 @@ function print_help() {
     echo "  $0 host autoupdate       - Interactive setup for host cronjobs"
     echo ""
     echo "MANAGEMENT LEVEL (Executed on Workstation/Steam Deck):"
-    echo "  $0 manage bump           - Updates flake.lock and pushes to git"
+    echo "  $0 manage bump           - Updates flake.lock (manually commit & push)"
+    echo "  $0 manage bump --push    - Updates flake.lock, auto-commits & pushes to git"
     echo "=========================================="
 }
 
@@ -139,6 +140,7 @@ function host_autoupdate() {
 # ==========================================
 
 function manage_bump() {
+    local auto_push=$1
     echo "=========================================="
     echo " Management: Bump flake.lock"
     echo "=========================================="
@@ -173,18 +175,25 @@ function manage_bump() {
 
     # 2. Check for changes and commit
     if git diff --name-only | grep -q "flake.lock"; then
-        echo "[+] flake.lock has been updated. Committing..."
-        git add flake.lock
-        git commit -m "chore(flake): bump dependencies"
+        echo "[+] flake.lock has been successfully updated!"
         
-        echo "[+] Pushing changes to remote repository..."
-        if git push; then
-            echo "[+] Success! The host server will apply the update during its next cycle."
+        if [ "$auto_push" == "--push" ]; then
+            echo "[+] Auto-push flag provided. Committing..."
+            git add flake.lock
+            git commit -m "chore(flake): bump dependencies"
+            
+            echo "[+] Pushing changes to remote repository..."
+            if git push; then
+                echo "[+] Success! The host server will apply the update during its next cycle."
+            else
+                echo "[-] Push failed. Please run 'git push' manually."
+            fi
         else
-            echo "[-] Push failed. Please run 'git push' manually."
+            echo "[i] Auto-push is disabled by default."
+            echo "    Please review your changes and run 'git commit' and 'git push' manually."
         fi
     else
-        echo "[+] flake.lock is already up to date. No changes pushed."
+        echo "[+] flake.lock is already up to date."
     fi
 }
 
@@ -209,7 +218,7 @@ case "$1" in
         ;;
     manage)
         case "$2" in
-            bump) manage_bump ;;
+            bump) manage_bump "$3" ;;
             *) print_help ;;
         esac
         ;;

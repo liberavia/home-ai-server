@@ -14,6 +14,7 @@
         ./hosts/server/configuration.nix
         ./modules/desktop.nix
         ./modules/ai-services.nix
+        ./modules/auto-upgrade.nix
       ];
     };
   };

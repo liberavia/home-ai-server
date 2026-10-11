@@ -14,10 +14,15 @@ function print_help() {
     echo " Home-AI Service Script"
     echo "=========================================="
     echo "HOST LEVEL (Executed on the NixOS Server):"
-    echo "  $0 host update all       - Pull git changes, update NixOS & Docker"
-    echo "  $0 host update system    - Pull git changes & update NixOS"
-    echo "  $0 host update services  - Pull git changes & update Docker"
-    echo "  $0 host autoupdate       - Interactive setup for host cronjobs"
+    echo "  $0 host stage            - Pull git changes, stage NixOS into bootloader"
+    echo "                             & pre-pull Docker images (NO reboot, NO disruption)"
+    echo "  $0 host auto-run         - Background GitOps runner (checks remote, stages if new commit,"
+    echo "                             notifies KDE desktop & bot/webhook)"
+    echo "  $0 host status           - Check update state, pending reboot flag & generations"
+    echo "  $0 host update all       - Pull git changes, apply immediately (switch NixOS & up Docker)"
+    echo "  $0 host update system    - Pull git changes & switch NixOS immediately"
+    echo "  $0 host update services  - Pull git changes & update Docker immediately"
+    echo "  $0 host autoupdate       - Info on systemd auto-upgrade timer & logs"
     echo ""
     echo "MANAGEMENT LEVEL (Executed on Workstation/Steam Deck):"
     echo "  $0 manage bump           - Updates flake.lock (manually commit & push)"
@@ -55,6 +60,150 @@ function check_disk_space() {
     echo "[+] Disk space check passed: ${free_space_gb}GB available on $partition."
 }
 
+function host_notify_kde() {
+    local title="$1"
+    local message="$2"
+    local urgency="${3:-critical}"
+    
+    local user_bus="/run/user/1000/bus"
+    if [ -S "$user_bus" ]; then
+        echo "[+] Sending KDE desktop notification..."
+        sudo -u deck DBUS_SESSION_BUS_ADDRESS="unix:path=$user_bus" \
+            notify-send -u "$urgency" -i system-software-update "$title" "$message" 2>/dev/null || true
+    fi
+}
+
+function host_notify_bot() {
+    local payload="$1"
+    local webhook_url="http://localhost:5678/webhook/system-update"
+    if curl -s -m 2 http://localhost:5678 &>/dev/null; then
+        echo "[+] Sending notification to n8n webhook..."
+        curl -s -m 5 -X POST -H "Content-Type: application/json" -d "$payload" "$webhook_url" &>/dev/null || true
+    fi
+}
+
+function host_write_status() {
+    local status="$1"
+    local details="$2"
+    local timestamp
+    timestamp=$(date -Iseconds)
+    
+    mkdir -p /var/log/home-ai
+    
+    if [ "$status" == "reboot_required" ]; then
+        touch /run/reboot-required
+    elif [ "$status" == "up_to_date" ]; then
+        rm -f /run/reboot-required
+    fi
+    
+    cat <<EOF > /var/log/home-ai/update-status.json
+{
+  "status": "$status",
+  "timestamp": "$timestamp",
+  "details": "$details",
+  "reboot_required": $([ "$status" == "reboot_required" ] && echo "true" || echo "false")
+}
+EOF
+    chmod 644 /var/log/home-ai/update-status.json 2>/dev/null || true
+}
+
+function host_status() {
+    echo "=========================================="
+    echo " Home-AI Server Update Status"
+    echo "=========================================="
+    if [ -f /run/reboot-required ]; then
+        echo "[!] Status: REBOOT REQUIRED (New generation staged in bootloader)"
+    else
+        echo "[+] Status: No reboot pending"
+    fi
+    
+    if [ -f /var/log/home-ai/update-status.json ]; then
+        echo ""
+        echo "Last update log (/var/log/home-ai/update-status.json):"
+        cat /var/log/home-ai/update-status.json
+        echo ""
+    fi
+    
+    cd "$SCRIPT_DIR"
+    echo "Git Status:"
+    echo "  Current commit: $(git rev-parse --short HEAD 2>/dev/null || echo 'unknown') - $(git log -1 --pretty=%s 2>/dev/null || echo '')"
+    if git ls-remote origin main &>/dev/null; then
+        local remote_commit
+        remote_commit=$(git ls-remote origin main | awk '{print $1}')
+        local local_commit
+        local_commit=$(git rev-parse HEAD 2>/dev/null || echo '')
+        if [ "$remote_commit" != "$local_commit" ]; then
+            echo "  [!] Remote origin/main has newer commits!"
+        else
+            echo "  [+] Local is in sync with origin/main."
+        fi
+    fi
+    echo "=========================================="
+}
+
+function host_stage_update() {
+    echo "[+] Staging Home-AI Update (Non-disruptive background build)..."
+    check_disk_space 5 /
+    cd "$SCRIPT_DIR"
+    
+    echo "[+] Pulling latest changes from Git repository..."
+    git pull || echo "[-] Git pull failed, continuing anyway..."
+    
+    check_sudo
+    echo "[+] Building and staging NixOS system into bootloader (nixos-rebuild boot)..."
+    sudo nixos-rebuild boot --flake .#${FLAKE_HOST}
+    
+    if [ -d "$SCRIPT_DIR/docker" ]; then
+        echo "[+] Pre-pulling Docker service images in background..."
+        cd "$SCRIPT_DIR/docker"
+        docker compose pull || echo "[-] Docker pull warning, continuing..."
+    fi
+    
+    local commit_msg
+    commit_msg=$(git log -1 --pretty=%s 2>/dev/null || echo "Update")
+    
+    host_write_status "reboot_required" "NixOS generation staged and Docker images pulled. Commit: $commit_msg"
+    
+    host_notify_kde "Home-AI: Update bereit" "Ein System-Update wurde im Hintergrund vorbereitet. Bitte starte das System bei Gelegenheit neu." "critical"
+    
+    host_notify_bot "{\"event\":\"update_staged\",\"reboot_required\":true,\"commit\":\"$commit_msg\",\"timestamp\":\"$(date -Iseconds)\"}"
+    
+    echo ""
+    echo "[+] SUCCESS: Update successfully staged!"
+    echo "    - NixOS bootloader updated."
+    echo "    - Docker images cached."
+    echo "    - /run/reboot-required created."
+    echo "    - KDE desktop and Bot notified."
+    echo "    Your active applications are uninterrupted. Please reboot when convenient."
+}
+
+function host_auto_run() {
+    echo "=========================================="
+    echo " Home-AI GitOps Auto-Update Check: $(date)"
+    echo "=========================================="
+    cd "$SCRIPT_DIR"
+    
+    echo "[+] Checking for remote updates on origin/main..."
+    if ! git fetch origin main --quiet; then
+        echo "[-] Network unreachable or git fetch failed. Skipping cycle."
+        exit 0
+    fi
+    
+    local local_rev
+    local remote_rev
+    local_rev=$(git rev-parse HEAD 2>/dev/null || echo "local")
+    remote_rev=$(git rev-parse origin/main 2>/dev/null || echo "remote")
+    
+    if [ "$local_rev" == "$remote_rev" ]; then
+        echo "[+] System is already up to date with origin/main. Nothing to do."
+        exit 0
+    fi
+    
+    echo "[+] New commits detected on origin/main ($local_rev -> $remote_rev)."
+    echo "[+] Proceeding with staging update..."
+    host_stage_update
+}
+
 function host_update_system() {
     echo "[+] Updating NixOS System (Pull-Only GitOps)..."
     check_disk_space 5 /
@@ -88,50 +237,18 @@ function host_update_services() {
 function host_autoupdate() {
     check_sudo
     echo "=========================================="
-    echo " Auto-Update Setup (Host Cron)"
+    echo " Auto-Update Info (NixOS Systemd Timer)"
     echo "=========================================="
-    echo "What should be updated automatically on this host?"
-    echo "1) All (System + Services)"
-    echo "2) System only (NixOS)"
-    echo "3) Services only (Docker)"
-    read -p "Selection (1-3): " choice
-    
-    local cmd_arg=""
-    case $choice in
-        1) cmd_arg="host update all" ;;
-        2) cmd_arg="host update system" ;;
-        3) cmd_arg="host update services" ;;
-        *) echo "Invalid selection."; exit 1 ;;
-    esac
-
+    echo "Auto-update is natively managed via the NixOS module (modules/auto-upgrade.nix)."
     echo ""
-    echo "How often should the update run?"
-    echo "1) Daily (at 04:00 AM)"
-    echo "2) Weekly (Sunday at 04:00 AM)"
-    echo "3) Custom cron expression"
-    read -p "Selection (1-3): " schedule
-    
-    local cron_expr=""
-    case $schedule in
-        1) cron_expr="0 4 * * *" ;;
-        2) cron_expr="0 4 * * 0" ;;
-        3) read -p "Enter cron expression (e.g. '0 3 * * 1'): " cron_expr ;;
-        *) echo "Invalid selection."; exit 1 ;;
-    esac
-    
-    sudo mkdir -p /var/log/home-ai
-    sudo touch /var/log/home-ai/autoupdate.log
-    sudo chmod 666 /var/log/home-ai/autoupdate.log
-
-    local cron_cmd="$cron_expr cd $SCRIPT_DIR && ./service.sh $cmd_arg >> /var/log/home-ai/autoupdate.log 2>&1"
-    
-    (crontab -l 2>/dev/null | grep -v "service.sh host update") | crontab -
-    (crontab -l 2>/dev/null; echo "$cron_cmd") | crontab -
-    
+    echo "Checking systemd timer status:"
+    systemctl status home-ai-autoupdate.timer || true
     echo ""
-    echo "[+] Host auto-update scheduled in crontab!"
-    echo "    Schedule: $cron_expr"
-    echo "    Command:  ./service.sh $cmd_arg"
+    echo "To test the background runner immediately:"
+    echo "  sudo systemctl start home-ai-autoupdate.service"
+    echo ""
+    echo "To follow recent auto-update logs:"
+    echo "  journalctl -u home-ai-autoupdate.service -e"
 }
 
 
@@ -204,6 +321,9 @@ function manage_bump() {
 case "$1" in
     host)
         case "$2" in
+            stage) host_stage_update ;;
+            auto-run) host_auto_run ;;
+            status) host_status ;;
             update)
                 case "$3" in
                     all) host_update_system; host_update_services ;;
